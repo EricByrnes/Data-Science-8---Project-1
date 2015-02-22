@@ -1,0 +1,184 @@
+---
+title: 'Practical Machine Learning: Course Project'
+author: "Eric Byrnes"
+output:
+  html_document:
+    keep_md: yes
+  pdf_document: default
+  word_document: default
+---
+
+
+## Synopsis
+The purpose of this analysis is to construct and apply a predictive model for exercise data gathered by 6 participants. The data is supplied already split between training and test data sets, and consists of measurements taking while doing a specific exercise (barbell lifts) correctly and incorrectly in 5 different ways. The model constructed here evaluates input values and predicts the "class" of the exercise (given in the data as a value A...E). Results are given as a table or predictions and comparisons to the test data set.
+
+The chosen model was a random forest, which was 100% accurate when used to predict values in the test data set.
+
+
+## Environment
+The locations of source and download files are detailed here and may be changed if necessary. This analysis will use the values below to download a zip file with a single CSV file containing the data. The zip will be stored to the value given below and unzipped to start the analysis.
+
+#### Analysis Configuration
+```{r configuration, echo = TRUE, results = "hide"}
+### Configuration variables set here
+# set remote filenames here (comment out to skip download)
+download.filepath.train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.filepath.test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+# set local filenames here
+filepath.train <- "./pml-training.csv"
+filepath.test <- "./pml-testing.csv"
+```
+
+In the following section, required packages are loaded and the execution environment described for reproducibility.
+```{r setup, echo = TRUE}
+# store run date
+run.date <- date()
+
+packages.required <- c("caret", "randomForest", "kernlab", "knitr")
+packages.needed <- packages.required[!(packages.required %in% installed.packages()[ ,"Package"])]
+if (length(packages.needed))
+   install.packages(packages.needed, repos="http://cran.rstudio.com/")
+sapply(packages.required, function(x) { require(x, character.only = TRUE) })
+
+sessionInfo()
+```
+
+
+## Exploration
+```{r load, echo = FALSE}
+# download files
+if (exists("download.filepath.train"))
+   download.file(download.filepath.train, filepath.train, "curl", quiet = TRUE)
+if (exists("download.filepath.test"))
+   download.file(download.filepath.test, filepath.test, "curl", quiet = TRUE)
+
+# load CSV data
+train <- read.csv(filepath.train, stringsAsFactors = FALSE)
+test <- read.csv(filepath.test, stringsAsFactors = FALSE)
+
+# convert classe (output) to factor
+train$classe <- factor(train$classe)
+```
+The data used in this analysis come from [http://groupware.les.inf.puc-rio.br/har]. Training data is available at `r download.filepath.train` and test data is available at `r download.filepath.test`. The training data contains `r nrow(train)` observations with `r ncol(train)` variables (including the variable to be predicted); the testing data contains `r nrow(test)` observations.
+
+
+## Pre-Processing
+#### Variable exclusion
+```{r exclude}
+# remove unnecessary variables individually
+static.rm <- c("X", "user_name",
+               "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp",
+               "new_window", "num_window")
+train <- train[, -which(colnames(train) %in% static.rm)]
+
+# create generic filtering function
+excludeBy <- function(x, fexclude, threshold) { mean(fexclude(x)) > threshold }
+
+# remove variables with little or no data
+#  >= 10% numeric and NA
+numeric.rm <- which(sapply(train, excludeBy, function(x) { is.na(x) }, .1))
+if (length(numeric.rm) > 0)
+   train <- train[, -numeric.rm]
+#  >= 10% character and NULL or empty
+char.rm <- which(sapply(train, excludeBy, function(x) { is.null(x) | x == "" }, .1))
+if (length(char.rm) > 0)
+   train <- train[, -char.rm]
+#  columns with only one unique value
+unique.rm <- which(sapply(train, function(x) { length(unique(x)) == 1 }))
+if (length(unique.rm) > 0)
+   train <- train[, -unique.rm]
+```
+
+Prior to model construction, a number of variables were removed to avoid potentially misleading factors being introduced, as follows:
+
+- **irrelevant static columns** such as naming or time stamp columns - `r static.rm` (`r length(static.rm)` columns)
+- **numeric columns with < X% data (NA)** - `r names(numeric.rm)` (`r length(numeric.rm)` columns)
+- **character columns with < X% data (NULL or "")** - `r names(char.rm)` (`r length(char.rm)` columns)
+- **columns with unique values** - `r names(unique.rm)` (`r length(unique.rm)` columns)
+
+Choosing the threshold for which to exclude missing data could be somewhat subjective. Several values where attempted: 90% (meaning >=90% missing in the data set), 50%, 20%, 10%) - in this case the same columns were excluded in each case, so this was not a factor in the analysis and 10% was used to exclude the indicated columns. After excluding these columns, `r (dim(train)[2] - 1)` columns remain in the training data set for use in prediction. Note that since no transformation is taking place on existing data, just variable exclusion, these actions do not need to be replicated to the test data set.
+
+#### Variable imputation
+```{r impute}
+# find empty columns
+emptyvalue.cols <- which(sapply(train, function(x) {
+   any(is.null(x) | x == "" | is.na(x))
+}))
+```
+Since we set a missing data threshold above, it is possible that columns remain in the data set that have some missing values. We check for this above and find that `r length(emptyvalue.cols)` such columns exist (meaning the threshold for exclusion could have been 0% above!).  Because of this, no further consideration is given to variable imputation here. 
+
+
+## Analysis
+#### Model Construction
+Based on the pre-processing done to this point, the training and test data sets are ready for analysis. Because we are attempting to predict a discrete variable (`classe`) in the result, we will attempt to fit models using random forest, KNN (k-nearest neighbor), and SVM (support vector machine) kernel method models, which are suited to this type of analysis. A "majority vote" of these models will then be applied to make a final prediction.
+
+Since developing a compact model is not a consideration, we will skip PCA analysis. We will apply e-fold cross-validation as an option during model training.
+
+```{r analysis}
+# set up cross-validation
+set.seed(1)
+cvOptions <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
+
+# create models
+#  random forest
+rf.model <- train(classe ~ ., data = train, method = "rf", trControl = cvOptions)
+#  KNN
+knn.model <- train(classe ~ ., data = train, method = "knn", trControl = cvOptions)
+#  SVM
+svm.model <- train(classe ~ ., data = train, method = "svmRadial", trControl = cvOptions)
+```
+
+#### Model Evaluation
+```{r evaluation}
+model.eval <- data.frame("Model Name" = c(rf.model$modelInfo$label,
+                                          knn.model$modelInfo$label,
+                                          svm.model$modelInfo$label),
+                         "Accuracy" = c(max(rf.model$results$Accuracy),
+                                        max(knn.model$results$Accuracy),
+                                        max(svm.model$results$Accuracy)))
+# output to knitr
+kable(model.eval)
+```
+
+Based on the evaluation above, all three models are relatively accurate, but the Random Forest model is the most accurate.
+
+#### Combined Prediction
+We will use all three models to make predictions on the test data, then use a combined model based on a majority vote of all models.
+
+```{r combination}
+# make predictions
+rf.pred <- predict(rf.model, test)
+knn.pred <- predict(knn.model, test)
+svm.pred <- predict(svm.model, test)
+
+# combine all values
+final.pred <- data.frame(RF = rf.pred,
+                         KNN = knn.pred,
+                         SVM = svm.pred)
+final.pred$Agree <- apply(final.pred, 1, function(x) { max(x) == min(x) })
+
+# rotate, output to knitr
+kable(as.data.frame(t(final.pred)))
+```
+
+All the values predicted from each model agree, as shown in the table above.
+
+
+## Conclusion
+Based on the analysis above and the agreement among all prediction models, the expected results for the test data set are:
+
+```{r results, echo = FALSE}
+all.pred <- rf.pred
+kable(as.data.frame(t(data.frame(Prediction = all.pred))))
+```
+
+```{r export, echo = FALSE, results = "hide"}
+writeAnswers <- function(x) {
+   for(i in 1:length(x)){
+      filename = paste0("answer_",i,".txt")
+      write.table(as.character(x[i]), file = filename,
+                  quote = FALSE, row.names = FALSE, col.names = FALSE)
+   }
+}
+writeAnswers(all.pred)
+```
