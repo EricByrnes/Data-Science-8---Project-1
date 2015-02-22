@@ -83,26 +83,20 @@ download.filepath.test &lt;- &quot;https://d396qusza40orc.cloudfront.net/predmac
 # set local filenames here
 filepath.train &lt;- &quot;./pml-training.csv&quot;
 filepath.test &lt;- &quot;./pml-testing.csv&quot;</code></pre>
-<p>In the following section, required packages are loaded and the execution environment described for reproducibility.</p>
+<p>In the following section, required packages are loaded and the execution environment described for reproducibility. Note the use of the doParallel package and <code>registerDoParallel</code> statement, which enables parallel processing, particularly during the computationally intensive model fitting steps. This package appears to work for Windows, but may be environment specific and is optional for the analysis.</p>
 <pre class="r"><code># store run date
 run.date &lt;- date()
 
-packages.required &lt;- c(&quot;caret&quot;, &quot;randomForest&quot;, &quot;kernlab&quot;, &quot;knitr&quot;)
+packages.required &lt;- c(&quot;doParallel&quot;, &quot;caret&quot;, &quot;randomForest&quot;, &quot;kernlab&quot;, &quot;knitr&quot;)
 packages.needed &lt;- packages.required[!(packages.required %in% installed.packages()[ ,&quot;Package&quot;])]
 if (length(packages.needed))
    install.packages(packages.needed, repos=&quot;http://cran.rstudio.com/&quot;)
-sapply(packages.required, function(x) { require(x, character.only = TRUE) })</code></pre>
-<pre><code>## Loading required package: caret
-## Loading required package: lattice
-## Loading required package: ggplot2
-## Loading required package: randomForest
-## randomForest 4.6-10
-## Type rfNews() to see new features/changes/bug fixes.
-## Loading required package: kernlab
-## Loading required package: knitr</code></pre>
-<pre><code>##        caret randomForest      kernlab        knitr 
-##         TRUE         TRUE         TRUE         TRUE</code></pre>
-<pre class="r"><code>sessionInfo()</code></pre>
+packages.loaded &lt;- sapply(packages.required, function(x) {
+   suppressPackageStartupMessages(require(x, character.only = TRUE))
+})
+
+registerDoParallel(cores = detectCores(all.tests = TRUE))
+sessionInfo()</code></pre>
 <pre><code>## R version 3.1.2 (2014-10-31)
 ## Platform: x86_64-w64-mingw32/x64 (64-bit)
 ## 
@@ -114,26 +108,27 @@ sapply(packages.required, function(x) { require(x, character.only = TRUE) })</co
 ## [5] LC_TIME=English_United States.1252    
 ## 
 ## attached base packages:
-## [1] stats     graphics  grDevices utils     datasets  methods   base     
+## [1] parallel  stats     graphics  grDevices utils     datasets  methods  
+## [8] base     
 ## 
 ## other attached packages:
 ## [1] knitr_1.9           kernlab_0.9-20      randomForest_4.6-10
 ## [4] caret_6.0-41        ggplot2_1.0.0       lattice_0.20-29    
+## [7] doParallel_1.0.8    iterators_1.0.7     foreach_1.4.2      
 ## 
 ## loaded via a namespace (and not attached):
 ##  [1] BradleyTerry2_1.0-6 brglm_0.5-9         car_2.0-24         
 ##  [4] codetools_0.2-10    colorspace_1.2-4    digest_0.6.8       
-##  [7] evaluate_0.5.5      foreach_1.4.2       formatR_1.0        
-## [10] grid_3.1.2          gtable_0.1.2        gtools_3.4.1       
-## [13] htmltools_0.2.6     iterators_1.0.7     lme4_1.1-7         
-## [16] MASS_7.3-37         Matrix_1.1-5        mgcv_1.8-4         
-## [19] minqa_1.2.4         munsell_0.4.2       nlme_3.1-119       
-## [22] nloptr_1.0.4        nnet_7.3-9          parallel_3.1.2     
-## [25] pbkrtest_0.4-2      plyr_1.8.1          proto_0.3-10       
-## [28] quantreg_5.11       Rcpp_0.11.4         reshape2_1.4.1     
-## [31] rmarkdown_0.5.1     scales_0.2.4        SparseM_1.6        
-## [34] splines_3.1.2       stringr_0.6.2       tools_3.1.2        
-## [37] yaml_2.1.13</code></pre>
+##  [7] evaluate_0.5.5      formatR_1.0         grid_3.1.2         
+## [10] gtable_0.1.2        gtools_3.4.1        htmltools_0.2.6    
+## [13] lme4_1.1-7          MASS_7.3-37         Matrix_1.1-5       
+## [16] mgcv_1.8-4          minqa_1.2.4         munsell_0.4.2      
+## [19] nlme_3.1-119        nloptr_1.0.4        nnet_7.3-9         
+## [22] pbkrtest_0.4-2      plyr_1.8.1          proto_0.3-10       
+## [25] quantreg_5.11       Rcpp_0.11.4         reshape2_1.4.1     
+## [28] rmarkdown_0.5.1     scales_0.2.4        SparseM_1.6        
+## [31] splines_3.1.2       stringr_0.6.2       tools_3.1.2        
+## [34] yaml_2.1.13</code></pre>
 </div>
 </div>
 <div id="exploration" class="section level2">
@@ -196,10 +191,13 @@ cvOptions &lt;- trainControl(method = &quot;cv&quot;, number = 3, allowParallel 
 
 # create models
 #  random forest
+rf.model.nocv &lt;- train(classe ~ ., data = train, method = &quot;rf&quot;)
 rf.model &lt;- train(classe ~ ., data = train, method = &quot;rf&quot;, trControl = cvOptions)
 #  KNN
+knn.model.nocv &lt;- train(classe ~ ., data = train, method = &quot;knn&quot;)
 knn.model &lt;- train(classe ~ ., data = train, method = &quot;knn&quot;, trControl = cvOptions)
 #  SVM
+svm.model.nocv &lt;- train(classe ~ ., data = train, method = &quot;svmRadial&quot;)
 svm.model &lt;- train(classe ~ ., data = train, method = &quot;svmRadial&quot;, trControl = cvOptions)</code></pre>
 </div>
 <div id="model-evaluation" class="section level4">
@@ -207,6 +205,9 @@ svm.model &lt;- train(classe ~ ., data = train, method = &quot;svmRadial&quot;, 
 <pre class="r"><code>model.eval &lt;- data.frame(&quot;Model Name&quot; = c(rf.model$modelInfo$label,
                                           knn.model$modelInfo$label,
                                           svm.model$modelInfo$label),
+                         &quot;No CV Accuracy&quot; = c(max(rf.model.nocv$results$Accuracy),
+                                        max(knn.model.nocv$results$Accuracy),
+                                        max(svm.model.nocv$results$Accuracy)),
                          &quot;Accuracy&quot; = c(max(rf.model$results$Accuracy),
                                         max(knn.model$results$Accuracy),
                                         max(svm.model$results$Accuracy)))
@@ -216,25 +217,29 @@ kable(model.eval)</code></pre>
 <thead>
 <tr class="header">
 <th align="left">Model.Name</th>
+<th align="right">No.CV.Accuracy</th>
 <th align="right">Accuracy</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
 <td align="left">Random Forest</td>
-<td align="right">0.9927122</td>
+<td align="right">0.9923269</td>
+<td align="right">0.9931709</td>
 </tr>
 <tr class="even">
 <td align="left">k-Nearest Neighbors</td>
-<td align="right">0.9060745</td>
+<td align="right">0.9041204</td>
+<td align="right">0.9055141</td>
 </tr>
 <tr class="odd">
 <td align="left">Support Vector Machines with Radial Basis Function Kernel</td>
-<td align="right">0.9266636</td>
+<td align="right">0.9388486</td>
+<td align="right">0.9262563</td>
 </tr>
 </tbody>
 </table>
-<p>Based on the evaluation above, all three models are relatively accurate, but the Random Forest model is the most accurate.</p>
+<p>Based on the evaluation above, all three models are relatively accurate, but the Random Forest model is the most accurate. Cross-validation did not appear to have a major impact on accuracy, but considerably reduced processing time during model fitting in this case.</p>
 </div>
 <div id="combined-prediction" class="section level4">
 <h4>Combined Prediction</h4>
@@ -245,9 +250,7 @@ knn.pred &lt;- predict(knn.model, test)
 svm.pred &lt;- predict(svm.model, test)
 
 # combine all values
-final.pred &lt;- data.frame(RF = rf.pred,
-                         KNN = knn.pred,
-                         SVM = svm.pred)
+final.pred &lt;- data.frame(RF = rf.pred, KNN = knn.pred, SVM = svm.pred)
 final.pred$Agree &lt;- apply(final.pred, 1, function(x) { max(x) == min(x) })
 
 # rotate, output to knitr

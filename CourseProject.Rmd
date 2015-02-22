@@ -19,7 +19,7 @@ The chosen model was a random forest, which was 100% accurate when used to predi
 The locations of source and download files are detailed here and may be changed if necessary. This analysis will use the values below to download a zip file with a single CSV file containing the data. The zip will be stored to the value given below and unzipped to start the analysis.
 
 #### Analysis Configuration
-```{r configuration, echo = TRUE, results = "hide"}
+```{r configuration, results = "hide"}
 ### Configuration variables set here
 # set remote filenames here (comment out to skip download)
 download.filepath.train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
@@ -29,17 +29,20 @@ filepath.train <- "./pml-training.csv"
 filepath.test <- "./pml-testing.csv"
 ```
 
-In the following section, required packages are loaded and the execution environment described for reproducibility.
-```{r setup, echo = TRUE}
+In the following section, required packages are loaded and the execution environment described for reproducibility. Note the use of the doParallel package and `registerDoParallel` statement, which enables parallel processing, particularly during the computationally intensive model fitting steps. This package appears to work for Windows, but may be environment specific and is optional for the analysis.
+```{r setup}
 # store run date
 run.date <- date()
 
-packages.required <- c("caret", "randomForest", "kernlab", "knitr")
+packages.required <- c("doParallel", "caret", "randomForest", "kernlab", "knitr")
 packages.needed <- packages.required[!(packages.required %in% installed.packages()[ ,"Package"])]
 if (length(packages.needed))
    install.packages(packages.needed, repos="http://cran.rstudio.com/")
-sapply(packages.required, function(x) { require(x, character.only = TRUE) })
+packages.loaded <- sapply(packages.required, function(x) {
+   suppressPackageStartupMessages(require(x, character.only = TRUE))
+})
 
+registerDoParallel(cores = detectCores(all.tests = TRUE))
 sessionInfo()
 ```
 
@@ -121,10 +124,13 @@ cvOptions <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
 
 # create models
 #  random forest
+rf.model.nocv <- train(classe ~ ., data = train, method = "rf")
 rf.model <- train(classe ~ ., data = train, method = "rf", trControl = cvOptions)
 #  KNN
+knn.model.nocv <- train(classe ~ ., data = train, method = "knn")
 knn.model <- train(classe ~ ., data = train, method = "knn", trControl = cvOptions)
 #  SVM
+svm.model.nocv <- train(classe ~ ., data = train, method = "svmRadial")
 svm.model <- train(classe ~ ., data = train, method = "svmRadial", trControl = cvOptions)
 ```
 
@@ -133,6 +139,9 @@ svm.model <- train(classe ~ ., data = train, method = "svmRadial", trControl = c
 model.eval <- data.frame("Model Name" = c(rf.model$modelInfo$label,
                                           knn.model$modelInfo$label,
                                           svm.model$modelInfo$label),
+                         "No CV Accuracy" = c(max(rf.model.nocv$results$Accuracy),
+                                        max(knn.model.nocv$results$Accuracy),
+                                        max(svm.model.nocv$results$Accuracy)),
                          "Accuracy" = c(max(rf.model$results$Accuracy),
                                         max(knn.model$results$Accuracy),
                                         max(svm.model$results$Accuracy)))
@@ -140,7 +149,7 @@ model.eval <- data.frame("Model Name" = c(rf.model$modelInfo$label,
 kable(model.eval)
 ```
 
-Based on the evaluation above, all three models are relatively accurate, but the Random Forest model is the most accurate.
+Based on the evaluation above, all three models are relatively accurate, but the Random Forest model is the most accurate. Cross-validation did not appear to have a major impact on accuracy, but considerably reduced processing time during model fitting in this case.
 
 #### Combined Prediction
 We will use all three models to make predictions on the test data, then use a combined model based on a majority vote of all models.
@@ -152,9 +161,7 @@ knn.pred <- predict(knn.model, test)
 svm.pred <- predict(svm.model, test)
 
 # combine all values
-final.pred <- data.frame(RF = rf.pred,
-                         KNN = knn.pred,
-                         SVM = svm.pred)
+final.pred <- data.frame(RF = rf.pred, KNN = knn.pred, SVM = svm.pred)
 final.pred$Agree <- apply(final.pred, 1, function(x) { max(x) == min(x) })
 
 # rotate, output to knitr
